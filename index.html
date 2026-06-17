@@ -425,11 +425,10 @@ header h1 em{font-style:italic;color:var(--moss);}
   .field-row{grid-template-columns:1fr;}
 }
 </style>
-<base target="_blank">
 </head>
 <body>
 
-<header>
+<<header>
   <div>
     <span class="brand-eyebrow">Registre interne — experts & consultants</span>
     <h1>Banque <em>d'Experts</em></h1>
@@ -575,19 +574,19 @@ async function loadExperts() {
     setSyncStatus('error', 'Non initialisé');
     return;
   }
-
+  
   setSyncStatus('syncing', 'Chargement…');
   try {
     const { data, error } = await supabaseClient
       .from('experts')
       .select('*')
       .order('created_at', { ascending: false });
-
+    
     if (error) {
       console.error('Supabase error:', error);
       throw new Error(error.message || 'Erreur Supabase');
     }
-
+    
     experts = data || [];
     setSyncStatus('online', 'Synchronisé');
     document.getElementById('lastUpdate').textContent = new Date().toLocaleString('fr-FR');
@@ -622,7 +621,7 @@ function renderChips() {
     return;
   }
   row.innerHTML = specs.map(s =>
-    `<span class="chip ${activeChip === s ? 'active' : ''}" onclick="toggleChip('${s.replace(/'/g, "\'")}')">${escapeHtml(s)}</span>`
+    `<span class="chip ${activeChip === s ? 'active' : ''}" onclick="toggleChip('${s.replace(/'/g, "\\'")}')">${escapeHtml(s)}</span>`
   ).join('');
 }
 
@@ -797,8 +796,7 @@ async function buildDocxFromText(name, spec, exp, contact, text) {
     new Paragraph({ children: [new TextRun({ text: contact ? `Contact : ${contact}` : '', size: 20, color: "6B6F68" })] }),
     new Paragraph({ text: "" }),
   ];
-  (text || '').split(/
-+/).forEach(line => {
+  (text || '').split(/\n+/).forEach(line => {
     if (line.trim()) paragraphs.push(new Paragraph({ children: [new TextRun(line.trim())], spacing: { after: 160 } }));
   });
   const doc = new Document({
@@ -817,13 +815,13 @@ async function uploadCvToStorage(blob, fileName) {
   const { data, error } = await supabaseClient.storage
     .from('expert-cvs')
     .upload(filePath, blob, { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-
+  
   if (error) throw error;
-
+  
   const { data: urlData } = supabaseClient.storage
     .from('expert-cvs')
     .getPublicUrl(filePath);
-
+  
   return { url: urlData.publicUrl, path: filePath, name: fileName };
 }
 
@@ -832,7 +830,7 @@ async function saveExpert() {
     showToast('⚠ Supabase non initialisé');
     return;
   }
-
+  
   const name = document.getElementById('f_name').value.trim();
   const spec = document.getElementById('f_spec').value.trim();
   if (!name || !spec) {
@@ -857,7 +855,7 @@ async function saveExpert() {
       cvInfo = await uploadCvToStorage(blob, pendingCvFile.name);
     } catch (err) {
       console.error(err);
-      showToast('⚠ Erreur lors de l'upload du CV');
+      showToast('⚠ Erreur lors de l\'upload du CV');
       return;
     }
   } else {
@@ -889,18 +887,18 @@ async function saveExpert() {
         .from('experts')
         .update(data)
         .eq('id', editId);
-
+      
       if (error) throw error;
       showToast('✓ Expert mis à jour');
     } else {
       const { error } = await supabaseClient
         .from('experts')
         .insert({ ...data, created_at: new Date().toISOString() });
-
+      
       if (error) throw error;
       showToast('✓ Expert ajouté');
     }
-
+    
     await loadExperts();
     render();
     closeAddModal();
@@ -919,16 +917,16 @@ async function deleteExpert(id) {
     return;
   }
   if (!confirm('Supprimer cet expert de la base ?')) return;
-
+  
   setSyncStatus('syncing', 'Suppression…');
   try {
     const { error } = await supabaseClient
       .from('experts')
       .delete()
       .eq('id', id);
-
+    
     if (error) throw error;
-
+    
     await loadExperts();
     render();
     showToast('Expert supprimé');
@@ -1021,7 +1019,7 @@ function showColumnMapping() {
   const container = document.getElementById('colMapContainer');
   container.innerHTML = FIELD_TARGETS.map(ft => {
     const guess = guessColumnIndex(ft.key);
-    const options = ['<option value="-1">— Ignorer —</option>']
+    const options = ['<<option value="-1">— Ignorer —</option>']
       .concat(parsedHeaders.map((h, i) => `<option value="${i}" ${i === guess ? 'selected' : ''}>${escapeHtml(h || '(colonne ' + (i + 1) + ')')}</option>`));
     return `<div class="col-map-row">
       <label>${ft.label}</label>
@@ -1035,7 +1033,7 @@ async function confirmImport() {
     showToast('⚠ Supabase non initialisé');
     return;
   }
-
+  
   const mapping = {};
   FIELD_TARGETS.forEach(ft => {
     mapping[ft.key] = parseInt(document.getElementById('map_' + ft.key).value, 10);
@@ -1086,14 +1084,14 @@ async function confirmImport() {
       }
       added++;
     }
-
+    
     await loadExperts();
     render();
     closeImportModal();
     showToast(`✓ ${added} expert(s) importé(s)`);
   } catch (e) {
     console.error(e);
-    showToast('⚠ Erreur lors de l'import');
+    showToast('⚠ Erreur lors de l\'import');
   } finally {
     document.getElementById('importBtn').disabled = false;
     setSyncStatus('online', 'Synchronisé');
@@ -1117,7 +1115,7 @@ async function exportExcel() {
   const list = getCurrentlyFilteredSorted();
   if (list.length === 0) { showToast('⚠ Aucun expert à exporter pour ce filtre'); return; }
 
-  showToast('Préparation de l’export…');
+  showToast('Préparation de l\u2019export…');
 
   const usedNames = new Set();
   function uniqueFileName(e) {
@@ -1172,18 +1170,12 @@ async function exportExcel() {
   zip.file('banque_experts.xlsx', xlsxArrayBuffer);
 
   zip.file('LISEZ-MOI.txt',
-    "Banque d'experts — export
-" +
-    "--------------------------
-" +
-    `Experts exportés : ${list.length}
-` +
-    "Ouvrez 'banque_experts.xlsx', puis cliquez sur les liens de la colonne 'CV (lien)'
-" +
-    "pour ouvrir directement le CV Word de chaque expert (dossier CVs/).
-" +
-    "Important : gardez le fichier Excel et le dossier CVs ensemble dans le même répertoire.
-"
+    "Banque d'experts — export\r\n" +
+    "--------------------------\r\n" +
+    `Experts exportés : ${list.length}\r\n` +
+    "Ouvrez 'banque_experts.xlsx', puis cliquez sur les liens de la colonne 'CV (lien)'\r\n" +
+    "pour ouvrir directement le CV Word de chaque expert (dossier CVs/).\r\n" +
+    "Important : gardez le fichier Excel et le dossier CVs ensemble dans le même répertoire.\r\n"
   );
 
   try {
@@ -1214,19 +1206,19 @@ document.getElementById('sortSelect').addEventListener('change', render);
 function init() {
   console.log('=== DÉMARRAGE ===');
   console.log('window.supabase =', typeof window.supabase, window.supabase);
-
+  
   if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
     console.error('❌ Supabase JS non chargé !');
     setSyncStatus('error', 'Librairie non chargée');
-    showToast('⚠ La librairie Supabase ne s'est pas chargée. Vérifiez votre connexion internet.');
+    showToast('⚠ La librairie Supabase ne s\'est pas chargée. Vérifiez votre connexion internet.');
     render();
     return;
   }
-
+  
   try {
     supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     console.log('✅ Client Supabase créé:', supabaseClient);
-
+    
     // Test immédiat
     supabaseClient.from('experts').select('*').limit(1).then(({data, error}) => {
       if (error) {
