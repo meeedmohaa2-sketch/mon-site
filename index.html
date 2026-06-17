@@ -414,6 +414,7 @@ header h1 em{font-style:italic;color:var(--moss);}
 }
 .sync-status.online .dot{background:var(--moss);}
 .sync-status.syncing .dot{background:var(--clay);animation:pulse 1s infinite;}
+.sync-status.error .dot{background:var(--clay);}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 @media(max-width:720px){
@@ -544,8 +545,8 @@ header h1 em{font-style:italic;color:var(--moss);}
 // ================= SUPABASE CONFIG =================
 const SUPABASE_URL = 'https://huyptrtliekcfsdvsstu.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_dnX-9bbdUkiQO2oCoRhvVw_erjuWEYu';
-const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
+let supabaseClient = null;
 let experts = [];
 let activeChip = null;
 let parsedRows = [];
@@ -570,29 +571,33 @@ function setSyncStatus(status, text) {
 
 // ---------- LOAD FROM SUPABASE ----------
 async function loadExperts() {
+  if (!supabaseClient) {
+    setSyncStatus('error', 'Non initialisé');
+    return;
+  }
+
   setSyncStatus('syncing', 'Chargement…');
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseClient
       .from('experts')
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (error) {
+      console.error('Supabase error:', error);
+      throw new Error(error.message || 'Erreur Supabase');
+    }
+
     experts = data || [];
     setSyncStatus('online', 'Synchronisé');
     document.getElementById('lastUpdate').textContent = new Date().toLocaleString('fr-FR');
+    console.log('Loaded', experts.length, 'experts');
   } catch (e) {
     console.error('Erreur chargement Supabase:', e);
-    setSyncStatus('', 'Hors ligne');
-    showToast('⚠ Erreur de connexion à Supabase');
+    setSyncStatus('error', 'Erreur: ' + (e.message || 'Inconnue'));
+    showToast('⚠ Erreur de connexion à Supabase: ' + (e.message || 'vérifiez la console'));
     experts = [];
   }
-}
-
-// ---------- PERSIST TO SUPABASE ----------
-async function persist() {
-  // No-op: data is already in Supabase after each CRUD operation
-  document.getElementById('lastUpdate').textContent = new Date().toLocaleString('fr-FR');
 }
 
 function showToast(msg) {
@@ -809,13 +814,13 @@ async function buildDocxFromText(name, spec, exp, contact, text) {
 
 async function uploadCvToStorage(blob, fileName) {
   const filePath = `cvs/${Date.now()}_${fileName}`;
-  const { data, error } = await supabase.storage
+  const { data, error } = await supabaseClient.storage
     .from('expert-cvs')
     .upload(filePath, blob, { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
 
   if (error) throw error;
 
-  const { data: urlData } = supabase.storage
+  const { data: urlData } = supabaseClient.storage
     .from('expert-cvs')
     .getPublicUrl(filePath);
 
@@ -823,6 +828,11 @@ async function uploadCvToStorage(blob, fileName) {
 }
 
 async function saveExpert() {
+  if (!supabaseClient) {
+    showToast('⚠ Supabase non initialisé');
+    return;
+  }
+
   const name = document.getElementById('f_name').value.trim();
   const spec = document.getElementById('f_spec').value.trim();
   if (!name || !spec) {
@@ -841,7 +851,6 @@ async function saveExpert() {
 
   let cvInfo = null;
 
-  // Resolve CV file: uploaded file > generated from text > keep existing
   if (pendingCvFile) {
     try {
       const blob = dataUrlToBlob(pendingCvFile.dataUrl);
@@ -876,8 +885,7 @@ async function saveExpert() {
 
   try {
     if (editId) {
-      // Update existing
-      const { error } = await supabase
+      const { error } = await supabaseClient
         .from('experts')
         .update(data)
         .eq('id', editId);
@@ -885,8 +893,7 @@ async function saveExpert() {
       if (error) throw error;
       showToast('✓ Expert mis à jour');
     } else {
-      // Insert new
-      const { error } = await supabase
+      const { error } = await supabaseClient
         .from('experts')
         .insert({ ...data, created_at: new Date().toISOString() });
 
@@ -899,7 +906,7 @@ async function saveExpert() {
     closeAddModal();
   } catch (e) {
     console.error(e);
-    showToast('⚠ Erreur lors de la sauvegarde');
+    showToast('⚠ Erreur lors de la sauvegarde: ' + (e.message || 'Inconnue'));
   } finally {
     document.getElementById('saveBtn').disabled = false;
     setSyncStatus('online', 'Synchronisé');
@@ -907,22 +914,20 @@ async function saveExpert() {
 }
 
 async function deleteExpert(id) {
+  if (!supabaseClient) {
+    showToast('⚠ Supabase non initialisé');
+    return;
+  }
   if (!confirm('Supprimer cet expert de la base ?')) return;
 
   setSyncStatus('syncing', 'Suppression…');
   try {
-    const expert = experts.find(x => x.id === id);
-
-    // Delete from Supabase
-    const { error } = await supabase
+    const { error } = await supabaseClient
       .from('experts')
       .delete()
       .eq('id', id);
 
     if (error) throw error;
-
-    // Optionally delete CV from storage (if we stored the path)
-    // For now we keep it to avoid breaking shared links
 
     await loadExperts();
     render();
@@ -1026,6 +1031,11 @@ function showColumnMapping() {
 }
 
 async function confirmImport() {
+  if (!supabaseClient) {
+    showToast('⚠ Supabase non initialisé');
+    return;
+  }
+
   const mapping = {};
   FIELD_TARGETS.forEach(ft => {
     mapping[ft.key] = parseInt(document.getElementById('map_' + ft.key).value, 10);
@@ -1059,7 +1069,7 @@ async function confirmImport() {
         } catch (e) { console.error('CV generation failed for', name, e); }
       }
 
-      const { error } = await supabase
+      const { error } = await supabaseClient
         .from('experts')
         .insert({
           name, spec, exp,
@@ -1201,12 +1211,46 @@ document.getElementById('searchInput').addEventListener('input', () => {
 document.getElementById('sortSelect').addEventListener('change', render);
 
 // ---------- INIT ----------
-async function init() {
-  await loadExperts();
-  render();
+function init() {
+  console.log('=== DÉMARRAGE ===');
+  console.log('window.supabase =', typeof window.supabase, window.supabase);
+
+  if (typeof window.supabase === 'undefined' || !window.supabase.createClient) {
+    console.error('❌ Supabase JS non chargé !');
+    setSyncStatus('error', 'Librairie non chargée');
+    showToast('⚠ La librairie Supabase ne s'est pas chargée. Vérifiez votre connexion internet.');
+    render();
+    return;
+  }
+
+  try {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    console.log('✅ Client Supabase créé:', supabaseClient);
+
+    // Test immédiat
+    supabaseClient.from('experts').select('*').limit(1).then(({data, error}) => {
+      if (error) {
+        console.error('❌ Test échoué:', error);
+        setSyncStatus('error', 'Erreur: ' + error.message);
+      } else {
+        console.log('✅ Test réussi, données:', data);
+        loadExperts().then(render);
+      }
+    });
+  } catch (e) {
+    console.error('❌ Erreur création client:', e);
+    setSyncStatus('error', 'Erreur init');
+    showToast('⚠ Erreur: ' + e.message);
+    render();
+  }
 }
 
-init();
+// Attendre que tout soit chargé
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
 </script>
 </body>
 </html>
