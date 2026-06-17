@@ -561,6 +561,15 @@ const FIELD_TARGETS = [
   {key:'cv', label:'CV / Résumé (→ Word)'}
 ];
 
+// ---------- UUID GENERATOR ----------
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
 // ---------- SYNC STATUS ----------
 function setSyncStatus(status, text) {
   const el = document.getElementById('syncStatus');
@@ -694,7 +703,7 @@ function sortExperts(list) {
 
 function cardHtml(e) {
   const skills = (e.skills || '').split(',').map(s => s.trim()).filter(Boolean);
-  const cvData = e.cv_data; // base64 data URL stored in DB
+  const cvData = e.cv_data;
   const cvName = e.cv_file_name || cvFileName(e);
   return `
   <div class="card" data-id="${e.id}">
@@ -835,7 +844,6 @@ async function saveExpert() {
   let cvData = null;
   let cvFileName = null;
 
-  // Resolve CV: uploaded file > generated from text > keep existing
   if (pendingCvFile) {
     cvData = pendingCvFile.dataUrl;
     cvFileName = pendingCvFile.name;
@@ -864,6 +872,7 @@ async function saveExpert() {
 
   try {
     if (editId) {
+      // UPDATE — no ID needed
       const { error } = await supabaseClient
         .from('experts')
         .update(data)
@@ -872,9 +881,13 @@ async function saveExpert() {
       if (error) throw error;
       showToast('✓ Expert mis à jour');
     } else {
+      // INSERT — MUST provide UUID
+      const newId = generateUUID();
+      console.log('Generated UUID:', newId);
+      
       const { error } = await supabaseClient
         .from('experts')
-        .insert({ ...data, created_at: new Date().toISOString() });
+        .insert({ id: newId, ...data, created_at: new Date().toISOString() });
       
       if (error) throw error;
       showToast('✓ Expert ajouté');
@@ -1055,9 +1068,11 @@ async function confirmImport() {
         } catch (e) { console.error('CV generation failed for', name, e); }
       }
 
+      const newId = generateUUID();
       const { error } = await supabaseClient
         .from('experts')
         .insert({
+          id: newId,
           name, spec, exp,
           skills: mapping.skills > -1 ? String(row[mapping.skills] || '').trim() : '',
           contact,
