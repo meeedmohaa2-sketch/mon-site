@@ -4,7 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Banque d'Experts — Base de CV</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 :root{
   --ink:#1b1f1c;
@@ -121,9 +124,10 @@ header h1 em{font-style:italic;color:var(--moss);}
 .btn-primary:hover{background:var(--moss-deep);border-color:var(--moss-deep);}
 .btn-clay{background:var(--clay);color:#fff;border-color:var(--clay);}
 .btn-clay:hover{background:#8f4d2e;border-color:#8f4d2e;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
 #fileInput{display:none;}
 
-/* ===== FILTER CHIPS (specialties found in data) ===== */
+/* ===== FILTER CHIPS ===== */
 .chips-row{
   padding:1rem 2rem;
   display:flex;
@@ -243,6 +247,24 @@ header h1 em{font-style:italic;color:var(--moss);}
   text-decoration:underline;
   align-self:flex-start;
 }
+.cv-link{
+  display:inline-flex;
+  align-items:center;
+  gap:.4rem;
+  font-family:var(--mono),monospace;
+  font-size:.74rem;
+  color:var(--moss-deep);
+  background:var(--tag-bg);
+  border:1px solid var(--line);
+  padding:.4rem .65rem;
+  border-radius:3px;
+  text-decoration:none;
+  align-self:flex-start;
+  transition:all .15s;
+}
+.cv-link:hover{background:var(--moss);color:#fff;border-color:var(--moss);}
+.cv-link-missing{color:var(--muted);background:transparent;cursor:default;}
+.cv-link-missing:hover{background:transparent;color:var(--muted);}
 
 /* ===== EMPTY STATE ===== */
 .empty{
@@ -299,6 +321,19 @@ header h1 em{font-style:italic;color:var(--moss);}
 .field textarea{resize:vertical;min-height:90px;font-family:inherit;}
 .field-row{display:grid;grid-template-columns:1fr 1fr;gap:.8rem;}
 .field-hint{font-size:.72rem;color:var(--muted);margin-top:.3rem;font-family:var(--mono),monospace;}
+.cv-upload-zone{
+  border:1.5px dashed var(--line);
+  border-radius:3px;
+  padding:.9rem 1rem;
+  text-align:center;
+  cursor:pointer;
+  font-size:.85rem;
+  color:var(--muted);
+  background:var(--paper);
+  transition:all .15s;
+}
+.cv-upload-zone:hover{border-color:var(--moss);background:var(--tag-bg);}
+.cv-upload-zone.has-file{border-color:var(--moss);background:var(--tag-bg);color:var(--moss-deep);font-weight:600;}
 .modal-actions{display:flex;gap:.7rem;margin-top:1.5rem;justify-content:flex-end;}
 
 /* ===== IMPORT MODAL SPECIFIC ===== */
@@ -366,6 +401,21 @@ header h1 em{font-style:italic;color:var(--moss);}
 }
 .toast.show{opacity:1;transform:translateY(0);}
 
+.sync-status{
+  font-family:var(--mono),monospace;
+  font-size:.72rem;
+  color:var(--muted);
+  display:flex;
+  align-items:center;
+  gap:.4rem;
+}
+.sync-status .dot{
+  width:6px;height:6px;border-radius:50%;background:var(--muted);display:inline-block;
+}
+.sync-status.online .dot{background:var(--moss);}
+.sync-status.syncing .dot{background:var(--clay);animation:pulse 1s infinite;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
 @media(max-width:720px){
   header{padding:1.6rem 1.2rem 1.2rem;}
   header h1{font-size:1.7rem;}
@@ -374,6 +424,7 @@ header h1 em{font-style:italic;color:var(--moss);}
   .field-row{grid-template-columns:1fr;}
 }
 </style>
+<base target="_blank">
 </head>
 <body>
 
@@ -384,6 +435,7 @@ header h1 em{font-style:italic;color:var(--moss);}
   </div>
   <div class="header-meta">
     <div><strong id="totalCount">0</strong> profils enregistrés</div>
+    <div class="sync-status" id="syncStatus"><span class="dot"></span> <span id="syncText">Connexion…</span></div>
     <div>Dernière mise à jour : <span id="lastUpdate">—</span></div>
   </div>
 </header>
@@ -392,9 +444,15 @@ header h1 em{font-style:italic;color:var(--moss);}
   <div class="search-box">
     <input type="text" id="searchInput" placeholder="Rechercher par spécialité ou compétence (ex : sociologue, SIG, audit...)">
   </div>
+  <select id="sortSelect" class="btn" style="cursor:pointer;">
+    <option value="name_asc">Trier : Nom (A→Z)</option>
+    <option value="name_desc">Trier : Nom (Z→A)</option>
+    <option value="spec_asc">Trier : Spécialité</option>
+    <option value="recent">Trier : Plus récents</option>
+  </select>
   <button class="btn btn-primary" onclick="openAddModal()">+ Ajouter un expert</button>
   <button class="btn" onclick="openImportModal()">Importer Excel</button>
-  <button class="btn btn-clay" onclick="exportExcel()">Exporter</button>
+  <button class="btn btn-clay" onclick="exportExcel()" title="Exporte les experts actuellement filtrés, avec leurs CV Word">Exporter (.zip)</button>
 </div>
 
 <div class="chips-row" id="chipsRow"></div>
@@ -439,12 +497,20 @@ header h1 em{font-style:italic;color:var(--moss);}
       <input type="text" id="f_contact" placeholder="ex : s.bouazizi@email.com — +216 XX XXX XXX">
     </div>
     <div class="field">
-      <label>CV / Résumé</label>
-      <textarea id="f_cv" placeholder="Parcours, missions clés, diplômes..."></textarea>
+      <label>CV (document Word)</label>
+      <div class="cv-upload-zone" id="cvUploadZone" onclick="document.getElementById('f_cv_file').click()">
+        <span id="cvUploadLabel">📄 Cliquez pour joindre un fichier .docx</span>
+      </div>
+      <input type="file" id="f_cv_file" accept=".docx" style="display:none;">
+      <div class="field-hint" id="cvFileHint"></div>
+      <div style="margin-top:.6rem;">
+        <span class="template-link" onclick="generateCvFromText()">Ou générer un CV Word à partir d'un texte →</span>
+      </div>
+      <textarea id="f_cv_text" placeholder="Collez ici un résumé de parcours si vous n'avez pas de fichier Word (un .docx sera généré automatiquement)" style="margin-top:.6rem;display:none;"></textarea>
     </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeAddModal()">Annuler</button>
-      <button class="btn btn-primary" onclick="saveExpert()">Enregistrer</button>
+      <button class="btn btn-primary" id="saveBtn" onclick="saveExpert()">Enregistrer</button>
     </div>
   </div>
 </div>
@@ -466,7 +532,7 @@ header h1 em{font-style:italic;color:var(--moss);}
       <div class="col-map" id="colMapContainer"></div>
       <div class="modal-actions">
         <button class="btn" onclick="closeImportModal()">Annuler</button>
-        <button class="btn btn-primary" onclick="confirmImport()">Importer ces experts</button>
+        <button class="btn btn-primary" id="importBtn" onclick="confirmImport()">Importer ces experts</button>
       </div>
     </div>
   </div>
@@ -475,10 +541,16 @@ header h1 em{font-style:italic;color:var(--moss);}
 <div class="toast" id="toast"></div>
 
 <script>
+// ================= SUPABASE CONFIG =================
+const SUPABASE_URL = 'https://huyptrtliekcfsdvsstu.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_dnX-9bbdUkiQO2oCoRhvVw_erjuWEYu';
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
 let experts = [];
 let activeChip = null;
 let parsedRows = [];
 let parsedHeaders = [];
+let pendingCvFile = null;
 
 const FIELD_TARGETS = [
   {key:'name', label:'Nom complet'},
@@ -486,89 +558,100 @@ const FIELD_TARGETS = [
   {key:'exp', label:'Expérience'},
   {key:'skills', label:'Compétences'},
   {key:'contact', label:'Contact'},
-  {key:'cv', label:'CV / Résumé'}
+  {key:'cv', label:'CV / Résumé (→ Word)'}
 ];
 
-// ---------- PERSISTENCE ----------
-const hasClaudeStorage = (typeof window.storage !== 'undefined');
+// ---------- SYNC STATUS ----------
+function setSyncStatus(status, text) {
+  const el = document.getElementById('syncStatus');
+  el.className = 'sync-status ' + status;
+  document.getElementById('syncText').textContent = text;
+}
 
-async function loadExperts(){
-  try{
-    if(hasClaudeStorage){
-      const res = await window.storage.get('experts-db', false);
-      experts = res ? JSON.parse(res.value) : [];
-    }else{
-      const raw = localStorage.getItem('experts-db');
-      experts = raw ? JSON.parse(raw) : [];
-    }
-  }catch(e){
+// ---------- LOAD FROM SUPABASE ----------
+async function loadExperts() {
+  setSyncStatus('syncing', 'Chargement…');
+  try {
+    const { data, error } = await supabase
+      .from('experts')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    experts = data || [];
+    setSyncStatus('online', 'Synchronisé');
+    document.getElementById('lastUpdate').textContent = new Date().toLocaleString('fr-FR');
+  } catch (e) {
+    console.error('Erreur chargement Supabase:', e);
+    setSyncStatus('', 'Hors ligne');
+    showToast('⚠ Erreur de connexion à Supabase');
     experts = [];
   }
 }
-async function persist(){
-  try{
-    if(hasClaudeStorage){
-      await window.storage.set('experts-db', JSON.stringify(experts), false);
-    }else{
-      localStorage.setItem('experts-db', JSON.stringify(experts));
-    }
-    document.getElementById('lastUpdate').textContent = new Date().toLocaleString('fr-FR');
-  }catch(e){
-    console.error('Erreur de sauvegarde', e);
-    showToast('⚠ Erreur de sauvegarde locale');
-  }
+
+// ---------- PERSIST TO SUPABASE ----------
+async function persist() {
+  // No-op: data is already in Supabase after each CRUD operation
+  document.getElementById('lastUpdate').textContent = new Date().toLocaleString('fr-FR');
 }
 
-function showToast(msg){
+function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 2400);
+  setTimeout(() => t.classList.remove('show'), 2400);
 }
 
 // ---------- RENDER ----------
-function getAllSpecialties(){
+function getAllSpecialties() {
   const set = new Set();
-  experts.forEach(e=>{ if(e.spec) set.add(e.spec.trim()); });
-  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+  experts.forEach(e => { if (e.spec) set.add(e.spec.trim()); });
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
 }
 
-function renderChips(){
+function renderChips() {
   const row = document.getElementById('chipsRow');
   const specs = getAllSpecialties();
-  if(specs.length === 0){ row.innerHTML = '<span style="font-family:var(--mono),monospace;font-size:.72rem;color:var(--muted);">Aucune spécialité encore enregistrée</span>'; return; }
-  row.innerHTML = specs.map(s=>`<span class="chip ${activeChip===s?'active':''}" onclick="toggleChip('${s.replace(/'/g,"\\'")}')">${escapeHtml(s)}</span>`).join('');
+  if (specs.length === 0) {
+    row.innerHTML = '<span style="font-family:var(--mono),monospace;font-size:.72rem;color:var(--muted);">Aucune spécialité encore enregistrée</span>';
+    return;
+  }
+  row.innerHTML = specs.map(s =>
+    `<span class="chip ${activeChip === s ? 'active' : ''}" onclick="toggleChip('${s.replace(/'/g, "\'")}')">${escapeHtml(s)}</span>`
+  ).join('');
 }
 
-function toggleChip(s){
+function toggleChip(s) {
   activeChip = (activeChip === s) ? null : s;
   document.getElementById('searchInput').value = '';
   render();
 }
 
-function escapeHtml(str){
+function escapeHtml(str) {
   const d = document.createElement('div');
   d.textContent = str ?? '';
   return d.innerHTML;
 }
 
-function matchesQuery(expert, query){
-  if(!query) return true;
+function matchesQuery(expert, query) {
+  if (!query) return true;
   const q = query.toLowerCase();
-  const haystack = [expert.spec, expert.skills].filter(Boolean).join(' ').toLowerCase();
+  const haystack = [expert.name, expert.spec, expert.skills, expert.contact].filter(Boolean).join(' ').toLowerCase();
   return haystack.includes(q);
 }
 
-function render(){
+function render() {
   const query = document.getElementById('searchInput').value.trim();
   let filtered = experts;
 
-  if(activeChip){
-    filtered = filtered.filter(e => (e.spec||'').trim() === activeChip);
+  if (activeChip) {
+    filtered = filtered.filter(e => (e.spec || '').trim() === activeChip);
   }
-  if(query){
+  if (query) {
     filtered = filtered.filter(e => matchesQuery(e, query));
   }
+
+  filtered = sortExperts(filtered);
 
   document.getElementById('totalCount').textContent = experts.length;
   document.getElementById('resultsCount').textContent = filtered.length;
@@ -577,10 +660,10 @@ function render(){
   const grid = document.getElementById('grid');
   const empty = document.getElementById('emptyState');
 
-  if(filtered.length === 0){
+  if (filtered.length === 0) {
     grid.style.display = 'none';
     empty.style.display = 'block';
-  }else{
+  } else {
     grid.style.display = 'grid';
     empty.style.display = 'none';
     grid.innerHTML = filtered.map(cardHtml).join('');
@@ -588,22 +671,40 @@ function render(){
   renderChips();
 }
 
-function cardHtml(e){
-  const skills = (e.skills||'').split(',').map(s=>s.trim()).filter(Boolean);
-  const cvText = e.cv || '';
+function sortExperts(list) {
+  const mode = document.getElementById('sortSelect').value;
+  const copy = [...list];
+  switch (mode) {
+    case 'name_asc':
+      return copy.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'fr', { sensitivity: 'base' }));
+    case 'name_desc':
+      return copy.sort((a, b) => (b.name || '').localeCompare(a.name || '', 'fr', { sensitivity: 'base' }));
+    case 'spec_asc':
+      return copy.sort((a, b) => (a.spec || '').localeCompare(b.spec || '', 'fr', { sensitivity: 'base' }) || (a.name || '').localeCompare(b.name || '', 'fr'));
+    case 'recent':
+      return copy.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    default:
+      return copy;
+  }
+}
+
+function cardHtml(e) {
+  const skills = (e.skills || '').split(',').map(s => s.trim()).filter(Boolean);
+  const cvUrl = e.cv_file_url;
+  const cvName = e.cv_file_name || cvFileName(e);
   return `
   <div class="card" data-id="${e.id}">
     <div class="card-top">
       <div>
-        <div class="card-name">${escapeHtml(e.name||'Sans nom')}</div>
-        <div class="card-spec">${escapeHtml(e.spec||'—')}</div>
+        <div class="card-name">${escapeHtml(e.name || 'Sans nom')}</div>
+        <div class="card-spec">${escapeHtml(e.spec || '—')}</div>
       </div>
       ${e.exp ? `<div class="card-exp">${escapeHtml(e.exp)}</div>` : ''}
     </div>
-    ${skills.length ? `<div class="card-skills">${skills.map(s=>`<span class="skill-tag">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
-    ${cvText ? `<div class="card-cv" id="cv-${e.id}">${escapeHtml(cvText)}</div><span class="read-more" onclick="toggleCv('${e.id}')">lire plus</span>` : ''}
+    ${skills.length ? `<div class="card-skills">${skills.map(s => `<span class="skill-tag">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
+    ${cvUrl ? `<a class="cv-link" href="${escapeHtml(cvUrl)}" target="_blank">📄 Télécharger le CV (.docx)</a>` : `<span class="cv-link cv-link-missing">📄 Aucun CV joint</span>`}
     <div class="card-contact">
-      <span>${escapeHtml(e.contact||'Pas de contact renseigné')}</span>
+      <span>${escapeHtml(e.contact || 'Pas de contact renseigné')}</span>
       <div class="card-actions">
         <button class="icon-btn" title="Modifier" onclick="editExpert('${e.id}')">✎</button>
         <button class="icon-btn" title="Supprimer" onclick="deleteExpert('${e.id}')">🗑</button>
@@ -612,106 +713,277 @@ function cardHtml(e){
   </div>`;
 }
 
-function toggleCv(id){
-  const el = document.getElementById('cv-'+id);
-  el.classList.toggle('expanded');
+function cvFileName(e) {
+  const safe = (e.name || 'expert').replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '');
+  return `CV_${safe}.docx`;
 }
 
 // ---------- ADD / EDIT MODAL ----------
-function openAddModal(){
+function resetCvUploadUI() {
+  pendingCvFile = null;
+  document.getElementById('f_cv_file').value = '';
+  document.getElementById('cvUploadZone').classList.remove('has-file');
+  document.getElementById('cvUploadLabel').textContent = '📄 Cliquez pour joindre un fichier .docx';
+  document.getElementById('cvFileHint').textContent = '';
+  document.getElementById('f_cv_text').style.display = 'none';
+  document.getElementById('f_cv_text').value = '';
+}
+
+function openAddModal() {
   document.getElementById('modalTitle').textContent = 'Ajouter un expert';
   document.getElementById('editId').value = '';
-  ['f_name','f_spec','f_exp','f_skills','f_contact','f_cv'].forEach(id=>document.getElementById(id).value='');
+  ['f_name', 'f_spec', 'f_exp', 'f_skills', 'f_contact'].forEach(id => document.getElementById(id).value = '');
+  resetCvUploadUI();
   document.getElementById('addModalOverlay').classList.add('open');
 }
-function closeAddModal(){
+
+function closeAddModal() {
   document.getElementById('addModalOverlay').classList.remove('open');
 }
-function editExpert(id){
-  const e = experts.find(x=>x.id===id);
-  if(!e) return;
+
+function editExpert(id) {
+  const e = experts.find(x => x.id === id);
+  if (!e) return;
   document.getElementById('modalTitle').textContent = "Modifier l'expert";
   document.getElementById('editId').value = id;
-  document.getElementById('f_name').value = e.name||'';
-  document.getElementById('f_spec').value = e.spec||'';
-  document.getElementById('f_exp').value = e.exp||'';
-  document.getElementById('f_skills').value = e.skills||'';
-  document.getElementById('f_contact').value = e.contact||'';
-  document.getElementById('f_cv').value = e.cv||'';
+  document.getElementById('f_name').value = e.name || '';
+  document.getElementById('f_spec').value = e.spec || '';
+  document.getElementById('f_exp').value = e.exp || '';
+  document.getElementById('f_skills').value = e.skills || '';
+  document.getElementById('f_contact').value = e.contact || '';
+  resetCvUploadUI();
+  if (e.cv_file_url) {
+    document.getElementById('cvUploadZone').classList.add('has-file');
+    document.getElementById('cvUploadLabel').textContent = '✓ ' + (e.cv_file_name || 'CV existant');
+    document.getElementById('cvFileHint').textContent = 'Choisissez un nouveau fichier pour le remplacer.';
+  }
   document.getElementById('addModalOverlay').classList.add('open');
 }
-async function saveExpert(){
+
+document.getElementById('f_cv_file').addEventListener('change', (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.docx')) {
+    showToast('⚠ Merci de choisir un fichier .docx');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    pendingCvFile = { dataUrl: e.target.result, name: file.name };
+    document.getElementById('cvUploadZone').classList.add('has-file');
+    document.getElementById('cvUploadLabel').textContent = '✓ ' + file.name;
+    document.getElementById('cvFileHint').textContent = 'Fichier prêt à être enregistré.';
+  };
+  reader.readAsDataURL(file);
+});
+
+function generateCvFromText() {
+  const ta = document.getElementById('f_cv_text');
+  ta.style.display = (ta.style.display === 'none') ? 'block' : 'none';
+  if (ta.style.display === 'block') ta.focus();
+}
+
+async function buildDocxFromText(name, spec, exp, contact, text) {
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = window.docx;
+  const paragraphs = [
+    new Paragraph({ heading: HeadingLevel.HEADING_1, children: [new TextRun({ text: name || 'CV', bold: true })] }),
+    new Paragraph({ children: [new TextRun({ text: spec || '', italics: true, color: "3C5B43" })] }),
+    new Paragraph({ children: [new TextRun({ text: exp ? `Expérience : ${exp}` : '', size: 20, color: "6B6F68" })] }),
+    new Paragraph({ children: [new TextRun({ text: contact ? `Contact : ${contact}` : '', size: 20, color: "6B6F68" })] }),
+    new Paragraph({ text: "" }),
+  ];
+  (text || '').split(/
++/).forEach(line => {
+    if (line.trim()) paragraphs.push(new Paragraph({ children: [new TextRun(line.trim())], spacing: { after: 160 } }));
+  });
+  const doc = new Document({
+    styles: { default: { document: { run: { font: "Arial", size: 24 } } } },
+    sections: [{
+      properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1134, right: 1134, bottom: 1134, left: 1134 } } },
+      children: paragraphs
+    }]
+  });
+  const blob = await Packer.toBlob(doc);
+  return blob;
+}
+
+async function uploadCvToStorage(blob, fileName) {
+  const filePath = `cvs/${Date.now()}_${fileName}`;
+  const { data, error } = await supabase.storage
+    .from('expert-cvs')
+    .upload(filePath, blob, { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+
+  if (error) throw error;
+
+  const { data: urlData } = supabase.storage
+    .from('expert-cvs')
+    .getPublicUrl(filePath);
+
+  return { url: urlData.publicUrl, path: filePath, name: fileName };
+}
+
+async function saveExpert() {
   const name = document.getElementById('f_name').value.trim();
   const spec = document.getElementById('f_spec').value.trim();
-  if(!name || !spec){
+  if (!name || !spec) {
     showToast('⚠ Nom et spécialité sont obligatoires');
     return;
   }
   const editId = document.getElementById('editId').value;
+  const exp = document.getElementById('f_exp').value.trim();
+  const contact = document.getElementById('f_contact').value.trim();
+
   const data = {
-    name, spec,
-    exp: document.getElementById('f_exp').value.trim(),
+    name, spec, exp,
     skills: document.getElementById('f_skills').value.trim(),
-    contact: document.getElementById('f_contact').value.trim(),
-    cv: document.getElementById('f_cv').value.trim()
+    contact
   };
-  if(editId){
-    const idx = experts.findIndex(x=>x.id===editId);
-    if(idx>-1) experts[idx] = {...experts[idx], ...data};
-    showToast('✓ Expert mis à jour');
-  }else{
-    experts.push({id: 'exp_'+Date.now()+'_'+Math.random().toString(36).slice(2,7), ...data});
-    showToast('✓ Expert ajouté');
+
+  let cvInfo = null;
+
+  // Resolve CV file: uploaded file > generated from text > keep existing
+  if (pendingCvFile) {
+    try {
+      const blob = dataUrlToBlob(pendingCvFile.dataUrl);
+      cvInfo = await uploadCvToStorage(blob, pendingCvFile.name);
+    } catch (err) {
+      console.error(err);
+      showToast('⚠ Erreur lors de l'upload du CV');
+      return;
+    }
+  } else {
+    const cvText = document.getElementById('f_cv_text').value.trim();
+    if (cvText) {
+      try {
+        const blob = await buildDocxFromText(name, spec, exp, contact, cvText);
+        const fileName = `CV_${name.replace(/[^a-z0-9]+/gi, '_')}.docx`;
+        cvInfo = await uploadCvToStorage(blob, fileName);
+      } catch (err) {
+        console.error(err);
+        showToast('⚠ Erreur lors de la génération du CV Word');
+        return;
+      }
+    }
   }
-  await persist();
-  closeAddModal();
-  render();
+
+  if (cvInfo) {
+    data.cv_file_url = cvInfo.url;
+    data.cv_file_name = cvInfo.name;
+  }
+
+  setSyncStatus('syncing', 'Sauvegarde…');
+  document.getElementById('saveBtn').disabled = true;
+
+  try {
+    if (editId) {
+      // Update existing
+      const { error } = await supabase
+        .from('experts')
+        .update(data)
+        .eq('id', editId);
+
+      if (error) throw error;
+      showToast('✓ Expert mis à jour');
+    } else {
+      // Insert new
+      const { error } = await supabase
+        .from('experts')
+        .insert({ ...data, created_at: new Date().toISOString() });
+
+      if (error) throw error;
+      showToast('✓ Expert ajouté');
+    }
+
+    await loadExperts();
+    render();
+    closeAddModal();
+  } catch (e) {
+    console.error(e);
+    showToast('⚠ Erreur lors de la sauvegarde');
+  } finally {
+    document.getElementById('saveBtn').disabled = false;
+    setSyncStatus('online', 'Synchronisé');
+  }
 }
-async function deleteExpert(id){
-  if(!confirm('Supprimer cet expert de la base ?')) return;
-  experts = experts.filter(x=>x.id!==id);
-  await persist();
-  render();
-  showToast('Expert supprimé');
+
+async function deleteExpert(id) {
+  if (!confirm('Supprimer cet expert de la base ?')) return;
+
+  setSyncStatus('syncing', 'Suppression…');
+  try {
+    const expert = experts.find(x => x.id === id);
+
+    // Delete from Supabase
+    const { error } = await supabase
+      .from('experts')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    // Optionally delete CV from storage (if we stored the path)
+    // For now we keep it to avoid breaking shared links
+
+    await loadExperts();
+    render();
+    showToast('Expert supprimé');
+  } catch (e) {
+    console.error(e);
+    showToast('⚠ Erreur lors de la suppression');
+  } finally {
+    setSyncStatus('online', 'Synchronisé');
+  }
+}
+
+function dataUrlToBlob(dataUrl) {
+  const arr = dataUrl.split(',');
+  const mime = arr[0].match(/:(.*?);/)[1];
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) u8arr[n] = bstr.charCodeAt(n);
+  return new Blob([u8arr], { type: mime });
 }
 
 // ---------- IMPORT EXCEL ----------
-function openImportModal(){
-  document.getElementById('importStep1').style.display='block';
-  document.getElementById('importStep2').style.display='none';
+function openImportModal() {
+  document.getElementById('importStep1').style.display = 'block';
+  document.getElementById('importStep2').style.display = 'none';
   document.getElementById('importModalOverlay').classList.add('open');
 }
-function closeImportModal(){
+
+function closeImportModal() {
   document.getElementById('importModalOverlay').classList.remove('open');
   document.getElementById('fileInput2').value = '';
 }
 
-document.getElementById('fileInput2').addEventListener('change', (ev)=>{
-  if(ev.target.files.length) handleExcelFile(ev.target.files[0]);
-});
-const dropZone = document.getElementById('dropZone');
-dropZone.addEventListener('dragover', e=>{e.preventDefault(); dropZone.classList.add('dragover');});
-dropZone.addEventListener('dragleave', ()=>dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e=>{
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-  if(e.dataTransfer.files.length) handleExcelFile(e.dataTransfer.files[0]);
+document.getElementById('fileInput2').addEventListener('change', (ev) => {
+  if (ev.target.files.length) handleExcelFile(ev.target.files[0]);
 });
 
-function handleExcelFile(file){
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleExcelFile(e.dataTransfer.files[0]);
+});
+
+function handleExcelFile(file) {
   const reader = new FileReader();
-  reader.onload = (e)=>{
-    try{
+  reader.onload = (e) => {
+    try {
       const data = new Uint8Array(e.target.result);
-      const wb = XLSX.read(data, {type:'array'});
+      const wb = XLSX.read(data, { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet, {header:1, defval:''});
-      if(rows.length < 2){ showToast('⚠ Fichier vide ou sans données'); return; }
-      parsedHeaders = rows[0].map(h=>String(h).trim());
-      parsedRows = rows.slice(1).filter(r=>r.some(c=>String(c).trim()!==''));
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (rows.length < 2) { showToast('⚠ Fichier vide ou sans données'); return; }
+      parsedHeaders = rows[0].map(h => String(h).trim());
+      parsedRows = rows.slice(1).filter(r => r.some(c => String(c).trim() !== ''));
       showColumnMapping();
       document.getElementById('importModalOverlay').classList.add('open');
-    }catch(err){
+    } catch (err) {
       console.error(err);
       showToast('⚠ Impossible de lire ce fichier');
     }
@@ -719,33 +991,33 @@ function handleExcelFile(file){
   reader.readAsArrayBuffer(file);
 }
 
-function guessColumnIndex(targetKey){
+function guessColumnIndex(targetKey) {
   const dict = {
-    name:['nom','name','expert','consultant'],
-    spec:['spécialité','specialite','specialty','métier','metier','domaine','profession'],
-    exp:['expérience','experience','années','ans','exp'],
-    skills:['compétences','competences','skills','mots-clés','mots cles','keywords'],
-    contact:['contact','email','e-mail','téléphone','telephone','tel'],
-    cv:['cv','résumé','resume','bio','description']
+    name: ['nom', 'name', 'expert', 'consultant'],
+    spec: ['spécialité', 'specialite', 'specialty', 'métier', 'metier', 'domaine', 'profession'],
+    exp: ['expérience', 'experience', 'années', 'ans', 'exp'],
+    skills: ['compétences', 'competences', 'skills', 'mots-clés', 'mots cles', 'keywords'],
+    contact: ['contact', 'email', 'e-mail', 'téléphone', 'telephone', 'tel'],
+    cv: ['cv', 'résumé', 'resume', 'bio', 'description']
   };
-  const candidates = dict[targetKey]||[];
-  for(let i=0;i<parsedHeaders.length;i++){
+  const candidates = dict[targetKey] || [];
+  for (let i = 0; i < parsedHeaders.length; i++) {
     const h = parsedHeaders[i].toLowerCase();
-    if(candidates.some(c=>h.includes(c))) return i;
+    if (candidates.some(c => h.includes(c))) return i;
   }
   return -1;
 }
 
-function showColumnMapping(){
-  document.getElementById('importStep1').style.display='none';
-  document.getElementById('importStep2').style.display='block';
+function showColumnMapping() {
+  document.getElementById('importStep1').style.display = 'none';
+  document.getElementById('importStep2').style.display = 'block';
   document.getElementById('rowCount').textContent = parsedRows.length;
 
   const container = document.getElementById('colMapContainer');
-  container.innerHTML = FIELD_TARGETS.map(ft=>{
+  container.innerHTML = FIELD_TARGETS.map(ft => {
     const guess = guessColumnIndex(ft.key);
     const options = ['<option value="-1">— Ignorer —</option>']
-      .concat(parsedHeaders.map((h,i)=>`<option value="${i}" ${i===guess?'selected':''}>${escapeHtml(h||'(colonne '+(i+1)+')')}</option>`));
+      .concat(parsedHeaders.map((h, i) => `<option value="${i}" ${i === guess ? 'selected' : ''}>${escapeHtml(h || '(colonne ' + (i + 1) + ')')}</option>`));
     return `<div class="col-map-row">
       <label>${ft.label}</label>
       <select id="map_${ft.key}">${options.join('')}</select>
@@ -753,68 +1025,188 @@ function showColumnMapping(){
   }).join('');
 }
 
-async function confirmImport(){
+async function confirmImport() {
   const mapping = {};
-  FIELD_TARGETS.forEach(ft=>{
-    mapping[ft.key] = parseInt(document.getElementById('map_'+ft.key).value, 10);
+  FIELD_TARGETS.forEach(ft => {
+    mapping[ft.key] = parseInt(document.getElementById('map_' + ft.key).value, 10);
   });
-  if(mapping.name === -1 || mapping.spec === -1){
+  if (mapping.name === -1 || mapping.spec === -1) {
     showToast('⚠ Associez au moins Nom et Spécialité');
     return;
   }
   let added = 0;
-  parsedRows.forEach(row=>{
-    const name = mapping.name>-1 ? String(row[mapping.name]||'').trim() : '';
-    const spec = mapping.spec>-1 ? String(row[mapping.spec]||'').trim() : '';
-    if(!name && !spec) return;
-    experts.push({
-      id: 'exp_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
-      name, spec,
-      exp: mapping.exp>-1 ? String(row[mapping.exp]||'').trim() : '',
-      skills: mapping.skills>-1 ? String(row[mapping.skills]||'').trim() : '',
-      contact: mapping.contact>-1 ? String(row[mapping.contact]||'').trim() : '',
-      cv: mapping.cv>-1 ? String(row[mapping.cv]||'').trim() : ''
-    });
-    added++;
-  });
-  await persist();
-  closeImportModal();
-  render();
-  showToast(`✓ ${added} expert(s) importé(s)`);
+  showToast('Import en cours…');
+  document.getElementById('importBtn').disabled = true;
+  setSyncStatus('syncing', 'Import…');
+
+  try {
+    for (const row of parsedRows) {
+      const name = mapping.name > -1 ? String(row[mapping.name] || '').trim() : '';
+      const spec = mapping.spec > -1 ? String(row[mapping.spec] || '').trim() : '';
+      if (!name && !spec) continue;
+      const exp = mapping.exp > -1 ? String(row[mapping.exp] || '').trim() : '';
+      const contact = mapping.contact > -1 ? String(row[mapping.contact] || '').trim() : '';
+      const cvText = mapping.cv > -1 ? String(row[mapping.cv] || '').trim() : '';
+
+      let cvFileUrl = null, cvFileName = null;
+      if (cvText) {
+        try {
+          const blob = await buildDocxFromText(name, spec, exp, contact, cvText);
+          const fileName = `CV_${name.replace(/[^a-z0-9]+/gi, '_') || 'expert'}.docx`;
+          const cvInfo = await uploadCvToStorage(blob, fileName);
+          cvFileUrl = cvInfo.url;
+          cvFileName = cvInfo.name;
+        } catch (e) { console.error('CV generation failed for', name, e); }
+      }
+
+      const { error } = await supabase
+        .from('experts')
+        .insert({
+          name, spec, exp,
+          skills: mapping.skills > -1 ? String(row[mapping.skills] || '').trim() : '',
+          contact,
+          cv_file_url: cvFileUrl,
+          cv_file_name: cvFileName,
+          created_at: new Date().toISOString()
+        });
+
+      if (error) {
+        console.error('Insert error for', name, error);
+        continue;
+      }
+      added++;
+    }
+
+    await loadExperts();
+    render();
+    closeImportModal();
+    showToast(`✓ ${added} expert(s) importé(s)`);
+  } catch (e) {
+    console.error(e);
+    showToast('⚠ Erreur lors de l'import');
+  } finally {
+    document.getElementById('importBtn').disabled = false;
+    setSyncStatus('online', 'Synchronisé');
+  }
 }
 
 // ---------- EXPORT ----------
-function exportExcel(){
-  if(experts.length === 0){ showToast('⚠ Aucun expert à exporter'); return; }
-  const rows = experts.map(e=>({
-    'Nom': e.name, 'Spécialité': e.spec, 'Expérience': e.exp,
-    'Compétences': e.skills, 'Contact': e.contact, 'CV': e.cv
-  }));
+function getCurrentlyFilteredSorted() {
+  const query = document.getElementById('searchInput').value.trim();
+  let filtered = experts;
+  if (activeChip) {
+    filtered = filtered.filter(e => (e.spec || '').trim() === activeChip);
+  }
+  if (query) {
+    filtered = filtered.filter(e => matchesQuery(e, query));
+  }
+  return sortExperts(filtered);
+}
+
+async function exportExcel() {
+  const list = getCurrentlyFilteredSorted();
+  if (list.length === 0) { showToast('⚠ Aucun expert à exporter pour ce filtre'); return; }
+
+  showToast('Préparation de l’export…');
+
+  const usedNames = new Set();
+  function uniqueFileName(e) {
+    let base = cvFileName(e).replace(/\.docx$/i, '');
+    let name = base + '.docx';
+    let n = 2;
+    while (usedNames.has(name)) { name = `${base}_${n}.docx`; n++; }
+    usedNames.add(name);
+    return name;
+  }
+
+  const zip = new JSZip();
+  const cvFolder = zip.folder('CVs');
+
+  const rows = [];
+  for (const e of list) {
+    let cvCellValue = 'Aucun CV joint';
+    if (e.cv_file_url) {
+      try {
+        const response = await fetch(e.cv_file_url);
+        const blob = await response.blob();
+        const fname = uniqueFileName(e);
+        cvFolder.file(fname, blob);
+        cvCellValue = `CVs/${fname}`;
+      } catch (err) {
+        console.error('Failed to download CV for', e.name, err);
+      }
+    }
+    rows.push({
+      'Nom': e.name || '',
+      'Spécialité': e.spec || '',
+      'Expérience': e.exp || '',
+      'Compétences': e.skills || '',
+      'Contact': e.contact || '',
+      'CV (lien)': cvCellValue
+    });
+  }
+
   const ws = XLSX.utils.json_to_sheet(rows);
+  rows.forEach((row, i) => {
+    if (row['CV (lien)'] !== 'Aucun CV joint') {
+      const cellRef = XLSX.utils.encode_cell({ r: i + 1, c: 5 });
+      if (!ws[cellRef]) return;
+      ws[cellRef].l = { Target: row['CV (lien)'], Tooltip: 'Ouvrir le CV Word' };
+    }
+  });
+  ws['!cols'] = [{ wch: 22 }, { wch: 20 }, { wch: 14 }, { wch: 34 }, { wch: 26 }, { wch: 30 }];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Experts');
-  XLSX.writeFile(wb, 'banque_experts.xlsx');
-  showToast('✓ Export généré');
+  const xlsxArrayBuffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  zip.file('banque_experts.xlsx', xlsxArrayBuffer);
+
+  zip.file('LISEZ-MOI.txt',
+    "Banque d'experts — export
+" +
+    "--------------------------
+" +
+    `Experts exportés : ${list.length}
+` +
+    "Ouvrez 'banque_experts.xlsx', puis cliquez sur les liens de la colonne 'CV (lien)'
+" +
+    "pour ouvrir directement le CV Word de chaque expert (dossier CVs/).
+" +
+    "Important : gardez le fichier Excel et le dossier CVs ensemble dans le même répertoire.
+"
+  );
+
+  try {
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'banque_experts.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    showToast(`✓ Export prêt : ${list.length} expert(s) avec leurs CV`);
+  } catch (err) {
+    console.error(err);
+    showToast('⚠ Erreur lors de la génération du fichier');
+  }
 }
 
 // ---------- SEARCH ----------
-document.getElementById('searchInput').addEventListener('input', ()=>{
+document.getElementById('searchInput').addEventListener('input', () => {
   activeChip = null;
   render();
 });
+document.getElementById('sortSelect').addEventListener('change', render);
 
 // ---------- INIT ----------
-async function seedIfEmpty(){
-  if(experts.length === 0){
-    experts = [
-      {id:'seed_1', name:'Nesrine Charfi', spec:'Sociologue', exp:'9 ans', skills:'enquêtes terrain, consultation publique, PAR, parties prenantes', contact:'n.charfi@tcs-environnement.com', cv:"Sociologue spécialisée dans les études d'impact social (EIES) et les Plans d'Action de Réinstallation. Conduite de consultations publiques et de recensements socio-économiques pour des projets d'infrastructure financés par les bailleurs internationaux."},
-      {id:'seed_2', name:'Noura Gadhgadhi', spec:'Géomaticienne', exp:'7 ans', skills:'SIG, QGIS, ArcGIS, télédétection, GIS-Web', contact:'n.gadhgadhi@tcs-environnement.com', cv:"Responsable du laboratoire SIG. Conception de plateformes cartographiques web et analyse spatiale pour le suivi environnemental du territoire tunisien."},
-      {id:'seed_3', name:'Ali Messai', spec:'Expert HSSE', exp:'11 ans', skills:'suivi chantier, audit sécurité, HSSE, reporting E&S', contact:'a.messai@tcs-environnement.com', cv:"Expert en suivi HSSE des projets de construction et d'infrastructure, présence terrain permanente et mise en conformité aux normes de sécurité."}
-    ];
-    await persist();
-  }
+async function init() {
+  await loadExperts();
+  render();
 }
-loadExperts().then(seedIfEmpty).then(render);
+
+init();
 </script>
 </body>
 </html>
