@@ -694,7 +694,7 @@ function sortExperts(list) {
 
 function cardHtml(e) {
   const skills = (e.skills || '').split(',').map(s => s.trim()).filter(Boolean);
-  const cvUrl = e.cv_file_url;
+  const cvData = e.cv_data; // base64 data URL stored in DB
   const cvName = e.cv_file_name || cvFileName(e);
   return `
   <div class="card" data-id="${e.id}">
@@ -706,7 +706,7 @@ function cardHtml(e) {
       ${e.exp ? `<div class="card-exp">${escapeHtml(e.exp)}</div>` : ''}
     </div>
     ${skills.length ? `<div class="card-skills">${skills.map(s => `<span class="skill-tag">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
-    ${cvUrl ? `<a class="cv-link" href="${escapeHtml(cvUrl)}" target="_blank">📄 Télécharger le CV (.docx)</a>` : `<span class="cv-link cv-link-missing">📄 Aucun CV joint</span>`}
+    ${cvData ? `<a class="cv-link" download="${escapeHtml(cvName)}" href="${cvData}">📄 Télécharger le CV (.docx)</a>` : `<span class="cv-link cv-link-missing">📄 Aucun CV joint</span>`}
     <div class="card-contact">
       <span>${escapeHtml(e.contact || 'Pas de contact renseigné')}</span>
       <div class="card-actions">
@@ -756,7 +756,7 @@ function editExpert(id) {
   document.getElementById('f_skills').value = e.skills || '';
   document.getElementById('f_contact').value = e.contact || '';
   resetCvUploadUI();
-  if (e.cv_file_url) {
+  if (e.cv_data) {
     document.getElementById('cvUploadZone').classList.add('has-file');
     document.getElementById('cvUploadLabel').textContent = '✓ ' + (e.cv_file_name || 'CV existant');
     document.getElementById('cvFileHint').textContent = 'Choisissez un nouveau fichier pour le remplacer.';
@@ -810,21 +810,6 @@ async function buildDocxFromText(name, spec, exp, contact, text) {
   return blob;
 }
 
-async function uploadCvToStorage(blob, fileName) {
-  const filePath = `cvs/${Date.now()}_${fileName}`;
-  const { data, error } = await supabaseClient.storage
-    .from('expert-cvs')
-    .upload(filePath, blob, { contentType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-  
-  if (error) throw error;
-  
-  const { data: urlData } = supabaseClient.storage
-    .from('expert-cvs')
-    .getPublicUrl(filePath);
-  
-  return { url: urlData.publicUrl, path: filePath, name: fileName };
-}
-
 async function saveExpert() {
   if (!supabaseClient) {
     showToast('⚠ Supabase non initialisé');
@@ -847,24 +832,20 @@ async function saveExpert() {
     contact
   };
 
-  let cvInfo = null;
+  let cvData = null;
+  let cvFileName = null;
 
+  // Resolve CV: uploaded file > generated from text > keep existing
   if (pendingCvFile) {
-    try {
-      const blob = dataUrlToBlob(pendingCvFile.dataUrl);
-      cvInfo = await uploadCvToStorage(blob, pendingCvFile.name);
-    } catch (err) {
-      console.error(err);
-      showToast('⚠ Erreur lors de l\'upload du CV');
-      return;
-    }
+    cvData = pendingCvFile.dataUrl;
+    cvFileName = pendingCvFile.name;
   } else {
     const cvText = document.getElementById('f_cv_text').value.trim();
     if (cvText) {
       try {
         const blob = await buildDocxFromText(name, spec, exp, contact, cvText);
-        const fileName = `CV_${name.replace(/[^a-z0-9]+/gi, '_')}.docx`;
-        cvInfo = await uploadCvToStorage(blob, fileName);
+        cvData = await blobToDataUrl(blob);
+        cvFileName = `CV_${name.replace(/[^a-z0-9]+/gi, '_')}.docx`;
       } catch (err) {
         console.error(err);
         showToast('⚠ Erreur lors de la génération du CV Word');
@@ -873,9 +854,9 @@ async function saveExpert() {
     }
   }
 
-  if (cvInfo) {
-    data.cv_file_url = cvInfo.url;
-    data.cv_file_name = cvInfo.name;
+  if (cvData) {
+    data.cv_data = cvData;
+    data.cv_file_name = cvFileName;
   }
 
   setSyncStatus('syncing', 'Sauvegarde…');
@@ -936,6 +917,15 @@ async function deleteExpert(id) {
   } finally {
     setSyncStatus('online', 'Synchronisé');
   }
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 function dataUrlToBlob(dataUrl) {
@@ -1056,14 +1046,12 @@ async function confirmImport() {
       const contact = mapping.contact > -1 ? String(row[mapping.contact] || '').trim() : '';
       const cvText = mapping.cv > -1 ? String(row[mapping.cv] || '').trim() : '';
 
-      let cvFileUrl = null, cvFileName = null;
+      let cvData = null, cvFileName = null;
       if (cvText) {
         try {
           const blob = await buildDocxFromText(name, spec, exp, contact, cvText);
-          const fileName = `CV_${name.replace(/[^a-z0-9]+/gi, '_') || 'expert'}.docx`;
-          const cvInfo = await uploadCvToStorage(blob, fileName);
-          cvFileUrl = cvInfo.url;
-          cvFileName = cvInfo.name;
+          cvData = await blobToDataUrl(blob);
+          cvFileName = `CV_${name.replace(/[^a-z0-9]+/gi, '_') || 'expert'}.docx`;
         } catch (e) { console.error('CV generation failed for', name, e); }
       }
 
@@ -1073,7 +1061,7 @@ async function confirmImport() {
           name, spec, exp,
           skills: mapping.skills > -1 ? String(row[mapping.skills] || '').trim() : '',
           contact,
-          cv_file_url: cvFileUrl,
+          cv_data: cvData,
           cv_file_name: cvFileName,
           created_at: new Date().toISOString()
         });
@@ -1133,15 +1121,14 @@ async function exportExcel() {
   const rows = [];
   for (const e of list) {
     let cvCellValue = 'Aucun CV joint';
-    if (e.cv_file_url) {
+    if (e.cv_data) {
       try {
-        const response = await fetch(e.cv_file_url);
-        const blob = await response.blob();
+        const blob = dataUrlToBlob(e.cv_data);
         const fname = uniqueFileName(e);
         cvFolder.file(fname, blob);
         cvCellValue = `CVs/${fname}`;
       } catch (err) {
-        console.error('Failed to download CV for', e.name, err);
+        console.error('Failed to process CV for', e.name, err);
       }
     }
     rows.push({
