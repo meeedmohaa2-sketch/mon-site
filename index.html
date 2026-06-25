@@ -519,9 +519,9 @@ header h1 em{font-style:italic;color:var(--moss);}
     <div class="field">
       <label>CV (document Word)</label>
       <div class="cv-upload-zone" id="cvUploadZone" onclick="document.getElementById('f_cv_file').click()">
-        <span id="cvUploadLabel">📄 Cliquez pour joindre un fichier .docx ou .pdf</span>
+        <span id="cvUploadLabel">📄 Cliquez pour joindre un CV (Word, PDF, ODT, RTF, TXT…)</span>
       </div>
-      <input type="file" id="f_cv_file" accept=".docx,.pdf" style="display:none;">
+      <input type="file" id="f_cv_file" accept=".docx,.pdf,.doc,.odt,.rtf,.txt" style="display:none;">
       <div class="field-hint" id="cvFileHint"></div>
       <div style="margin-top:.6rem;">
         <span class="template-link" onclick="generateCvFromText()">Ou générer un CV Word à partir d'un texte →</span>
@@ -542,7 +542,7 @@ header h1 em{font-style:italic;color:var(--moss);}
     <div id="importStep1">
       <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput2').click()">
         <div class="drop-zone-icon">📊</div>
-        <p><strong>Cliquez pour choisir un fichier</strong> ou déposez-le ici<br>Formats acceptés : .xlsx, .xls · Les CV joints peuvent être .docx ou .pdf</p>
+        <p><strong>Cliquez pour choisir un fichier</strong> ou déposez-le ici<br>Formats acceptés : .xlsx, .xls · Les CV joints peuvent être Word, PDF, ODT, RTF, TXT…</p>
       </div>
       <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display:none;">
       <div class="field-hint">Le fichier doit contenir une ligne d'en-tête. Colonnes attendues : Nom, Spécialité, Expérience, Compétences, Contact, CV (l'ordre des colonnes n'a pas d'importance — vous les associerez à l'étape suivante).</div>
@@ -735,7 +735,7 @@ function cardHtml(e) {
       ${e.exp ? `<div class="card-exp">${escapeHtml(e.exp)}</div>` : ''}
     </div>
     ${skills.length ? `<div class="card-skills">${skills.map(s => `<span class="skill-tag">${escapeHtml(s)}</span>`).join('')}</div>` : ''}
-    ${cvData ? `<a class="cv-link" download="${escapeHtml(cvName)}" href="${cvData}">📄 Télécharger le CV</a>` : `<span class="cv-link cv-link-missing">📄 Aucun CV joint (.docx / .pdf)</span>`}
+    ${cvData ? `<a class="cv-link" download="${escapeHtml(cvName)}" href="${cvData}">📄 Télécharger le CV</a>` : `<span class="cv-link cv-link-missing">📄 Aucun CV joint</span>`}
     <div class="card-contact">
       <span>${escapeHtml(e.contact || 'Pas de contact renseigné')}</span>
       <div class="card-actions">
@@ -756,7 +756,7 @@ function resetCvUploadUI() {
   pendingCvFile = null;
   document.getElementById('f_cv_file').value = '';
   document.getElementById('cvUploadZone').classList.remove('has-file');
-  document.getElementById('cvUploadLabel').textContent = '📄 Cliquez pour joindre un fichier .docx ou .pdf';
+  document.getElementById('cvUploadLabel').textContent = '📄 Cliquez pour joindre un CV (Word, PDF, ODT, RTF, TXT…)';
   document.getElementById('cvFileHint').textContent = '';
   document.getElementById('f_cv_text').style.display = 'none';
   document.getElementById('f_cv_text').value = '';
@@ -796,8 +796,10 @@ function editExpert(id) {
 document.getElementById('f_cv_file').addEventListener('change', (ev) => {
   const file = ev.target.files[0];
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.docx') && !file.name.toLowerCase().endsWith('.pdf')) {
-    showToast('⚠ Merci de choisir un fichier .docx ou .pdf');
+  const allowedExts = ['.docx','.pdf','.doc','.odt','.rtf','.txt'];
+  const ext = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+  if (!allowedExts.includes(ext)) {
+    showToast('⚠ Formats acceptés : Word, PDF, ODT, RTF, TXT');
     return;
   }
   const reader = new FileReader();
@@ -1155,7 +1157,7 @@ async function exportExcel() {
 
   const rows = [];
   for (const e of list) {
-    let cvCellValue = 'Aucun CV joint (.docx / .pdf)';
+    let cvCellValue = 'Aucun CV joint';
     if (e.cv_data) {
       try {
         const blob = dataUrlToBlob(e.cv_data);
@@ -1178,7 +1180,7 @@ async function exportExcel() {
 
   const ws = XLSX.utils.json_to_sheet(rows);
   rows.forEach((row, i) => {
-    if (row['CV (lien)'] !== 'Aucun CV joint (.docx / .pdf)') {
+    if (row['CV (lien)'] !== 'Aucun CV joint') {
       const cellRef = XLSX.utils.encode_cell({ r: i + 1, c: 5 });
       if (!ws[cellRef]) return;
       ws[cellRef].l = { Target: row['CV (lien)'], Tooltip: 'Ouvrir le CV Word' };
@@ -1196,7 +1198,7 @@ async function exportExcel() {
     "--------------------------\r\n" +
     `Experts exportés : ${list.length}\r\n` +
     "Ouvrez 'banque_experts.xlsx', puis cliquez sur les liens de la colonne 'CV (lien)'\r\n" +
-    "pour ouvrir directement le CV (.docx / .pdf) de chaque expert (dossier CVs/).\r\n" +
+    "pour ouvrir directement le CV de chaque expert (dossier CVs/).\r\n" +
     "Important : gardez le fichier Excel et le dossier CVs ensemble dans le même répertoire.\r\n"
   );
 
